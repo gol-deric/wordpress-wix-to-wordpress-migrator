@@ -44,17 +44,48 @@ A comprehensive WordPress plugin to migrate content from Wix websites to WordPre
 
 ### 1. Get Wix API Credentials
 
-1. Visit [Wix Developers](https://dev.wix.com/)
-2. Create a new app or use an existing one
-3. Get your **Client ID** from the app settings
-4. Ensure your app has permission to access Blog APIs
+Follow these detailed steps to get your Wix Client ID:
+
+#### Step 1: Access Wix Headless Settings
+1. Log in to your **Wix account**
+2. Select your **website** from the dashboard
+3. Go to **Settings** > **Headless Settings**
+
+![Get Client ID Step 1](images/get_client_id_step_1.png)
+
+#### Step 2: Create New Client
+1. In the Headless Settings page
+2. Click **"Create New Client"** or similar button
+3. Configure your client settings as needed
+
+![Get Client ID Step 2](images/get_client_id_step_2.png)
+
+#### Step 3: Copy Client ID
+1. Once the client is created
+2. **Copy the Client ID** from the settings
+3. Keep this ID safe - you'll need it for the migration
+
+![Get Client ID Step 3](images/get_client_id_step_3.png)
+
+> **Important**: Make sure your Wix site has blog content and the headless API is enabled for blog access.
 
 ### 2. Configure the Plugin
 
-1. Go to **Tools > Wix Migrator** in WordPress admin
-2. Enter your **Wix Client ID**
-3. Click **"Authenticate with Wix"**
-4. Once authenticated, migration options will appear
+#### Step 4: Access Migration Tool
+1. In your **WordPress Admin Dashboard**
+2. Navigate to **Tools** > **Wix Migrator**
+3. You'll see the migration interface
+
+![Run Migration Tool](images/run_migrate_tool.png)
+
+#### Configure Migration Settings
+1. **Enter your Wix Client ID** in the provided field
+2. Click **"Authenticate with Wix"** button
+3. Wait for successful authentication message
+4. Once authenticated, migration options will appear:
+   - Migrate Categories
+   - Migrate Tags  
+   - Migrate Posts
 
 ### 3. Run Migration
 

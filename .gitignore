@@ -1,0 +1,38 @@
+# WordPress
+wp-config.php
+wp-content/uploads/
+wp-content/cache/
+wp-content/debug.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+error_log
+debug.log
+
+# Temporary files
+*.tmp
+*.temp
+.htaccess.bak
+
+# Node modules (if any build tools added later)
+node_modules/
+package-lock.json
+
+# Composer (if added later)
+/vendor/
+composer.lock
+
+# Environment files
+.env
+.env.local
