@@ -834,34 +834,114 @@ class Wix_Migrator {
             }
         }
         
+        // Handle Wix image ID format: image.src.id
+        if (isset($image_data['image']['src']['id']) && is_string($image_data['image']['src']['id'])) {
+            $image_id = $image_data['image']['src']['id'];
+            // Convert Wix image ID to URL format
+            // Wix images are typically served from static.wixstatic.com
+            $wix_image_url = "https://static.wixstatic.com/media/$image_id";
+            return $wix_image_url;
+        }
+        
+        // Handle other Wix ID formats
+        if (isset($image_data['src']['id']) && is_string($image_data['src']['id'])) {
+            $image_id = $image_data['src']['id'];
+            $wix_image_url = "https://static.wixstatic.com/media/$image_id";
+            return $wix_image_url;
+        }
+        
+        // Handle direct ID format
+        if (isset($image_data['id']) && is_string($image_data['id'])) {
+            $image_id = $image_data['id'];
+            $wix_image_url = "https://static.wixstatic.com/media/$image_id";
+            return $wix_image_url;
+        }
+        
         return '';
     }
     
-    private function download_and_attach_image($image_url, $post_id = 0) {
+    private function download_and_attach_image($image_url, $post_id = 0, $retry_count = 0) {
         // Validate URL first
         if (!is_string($image_url) || empty($image_url) || !filter_var($image_url, FILTER_VALIDATE_URL)) {
             return new WP_Error('invalid_url', 'Invalid image URL provided: ' . var_export($image_url, true));
         }
-        // Use WordPress HTTP API for better error handling
+        
+        // Check if this image was already downloaded before
+        $existing_attachment = $this->get_attachment_by_url($image_url);
+        if ($existing_attachment) {
+            return $existing_attachment;
+        }
+        
+        $max_retries = 3;
+        $retry_delay = 1; // seconds
+        
+        // Use WordPress HTTP API with retry mechanism
         $response = wp_remote_get($image_url, array(
-            'timeout' => 30,
+            'timeout' => 45, // Increased timeout
+            'redirection' => 5,
+            'user-agent' => 'Mozilla/5.0 (WordPress Wix Migrator) AppleWebKit/537.36',
             'headers' => array(
-                'User-Agent' => 'Wix WordPress Migrator/1.0'
+                'Accept' => 'image/*,*/*;q=0.8',
+                'Accept-Language' => 'en-US,en;q=0.5',
+                'Cache-Control' => 'no-cache',
+                'Pragma' => 'no-cache'
             )
         ));
         
         if (is_wp_error($response)) {
+            if ($retry_count < $max_retries) {
+                error_log("Wix Migration: Image download failed (attempt " . ($retry_count + 1) . "): " . $response->get_error_message() . ". Retrying in {$retry_delay}s...");
+                sleep($retry_delay);
+                return $this->download_and_attach_image($image_url, $post_id, $retry_count + 1);
+            }
             return $response;
         }
         
         $response_code = wp_remote_retrieve_response_code($response);
         if ($response_code !== 200) {
+            if ($retry_count < $max_retries && in_array($response_code, [403, 429, 500, 502, 503, 504])) {
+                error_log("Wix Migration: HTTP $response_code for image (attempt " . ($retry_count + 1) . "). Retrying in {$retry_delay}s...");
+                sleep($retry_delay);
+                return $this->download_and_attach_image($image_url, $post_id, $retry_count + 1);
+            }
             return new WP_Error('image_download_failed', 'Failed to download image: HTTP ' . $response_code);
         }
         
         $image_data = wp_remote_retrieve_body($response);
         if (empty($image_data)) {
             return new WP_Error('image_download_failed', 'Empty image data received');
+        }
+        
+        // Validate content type
+        $content_type = wp_remote_retrieve_header($response, 'content-type');
+        $valid_image_types = ['image/jpeg', 'image/jpg', 'image/png', 'image/gif', 'image/webp'];
+        
+        if ($content_type && !in_array(strtolower($content_type), $valid_image_types)) {
+            // Check if it's a generic content type that might still be an image
+            if (!in_array($content_type, ['application/octet-stream', 'binary/octet-stream'])) {
+                return new WP_Error('invalid_content_type', 'Invalid image content type: ' . $content_type);
+            }
+        }
+        
+        // Validate image data by checking file signature
+        $image_signatures = [
+            "\xFF\xD8\xFF" => 'jpg',    // JPEG
+            "\x89PNG\r\n\x1A\n" => 'png', // PNG
+            "GIF87a" => 'gif',          // GIF87a
+            "GIF89a" => 'gif',          // GIF89a
+            "RIFF" => 'webp'            // WebP (partial check)
+        ];
+        
+        $is_valid_image = false;
+        foreach ($image_signatures as $signature => $type) {
+            if (substr($image_data, 0, strlen($signature)) === $signature) {
+                $is_valid_image = true;
+                break;
+            }
+        }
+        
+        if (!$is_valid_image && strlen($image_data) > 100) {
+            return new WP_Error('invalid_image_data', 'Downloaded data does not appear to be a valid image');
         }
         
         // Get file info
@@ -878,6 +958,11 @@ class Wix_Migrator {
         $saved = file_put_contents($file_path, $image_data);
         if ($saved === false) {
             return new WP_Error('file_save_failed', 'Failed to save image file');
+        }
+        
+        // Verify file was saved correctly
+        if (!file_exists($file_path) || filesize($file_path) !== strlen($image_data)) {
+            return new WP_Error('file_verification_failed', 'File save verification failed');
         }
         
         // Check file type
