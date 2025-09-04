@@ -1,0 +1,68 @@
+.wix-migrator-wrap {
+    max-width: 800px;
+}
+
+#migration-status {
+    background: #fff;
+    border: 1px solid #c3c4c7;
+    border-radius: 4px;
+    padding: 20px;
+    margin: 20px 0;
+}
+
+#progress-bar {
+    margin: 10px 0;
+}
+
+#migration-log {
+    font-family: 'Courier New', monospace;
+    font-size: 12px;
+    line-height: 1.4;
+}
+
+.log-entry {
+    margin: 2px 0;
+    padding: 2px 0;
+}
+
+.log-success {
+    color: #008000;
+}
+
+.log-error {
+    color: #d63638;
+}
+
+.log-info {
+    color: #0073aa;
+}
+
+.migration-button {
+    margin-right: 10px !important;
+}
+
+#migration-controls {
+    margin: 20px 0;
+}
+
+#migration-summary {
+    background: #f9f9f9;
+    border: 1px solid #c3c4c7;
+    border-radius: 4px;
+    padding: 15px;
+    margin: 20px 0;
+}
+
+.summary-item {
+    margin: 5px 0;
+    padding: 5px;
+    background: #fff;
+    border-left: 4px solid #0073aa;
+    padding-left: 15px;
+}
+
+.spinner {
+    visibility: visible;
+    float: none;
+    margin: 0 5px 0 0;
+}
