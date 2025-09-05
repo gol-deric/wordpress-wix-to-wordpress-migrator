@@ -7,6 +7,7 @@ class Wix_Migrator_Admin {
         add_action('admin_init', array($this, 'admin_init'));
         add_action('wp_ajax_wix_migrate', array($this, 'ajax_migrate'));
         add_action('wp_ajax_wix_migrate_batch', array($this, 'ajax_migrate_batch'));
+        add_action('wp_ajax_wix_retry_post', array($this, 'ajax_retry_post'));
         add_action('admin_enqueue_scripts', array($this, 'enqueue_scripts'));
     }
     
@@ -154,6 +155,22 @@ class Wix_Migrator_Admin {
             wp_send_json_error($result->get_error_message());
         }
         
+        // Enhanced error reporting with failed posts details
+        if (isset($result['failed_posts']) && !empty($result['failed_posts'])) {
+            $migrator = new Wix_Migrator($client_id);
+            $result['failed_posts_summary'] = $migrator->get_failed_posts_summary($result['failed_posts']);
+            
+            // Log failed posts for admin review
+            error_log("Wix Migration: Failed posts detected in action '$action': " . count($result['failed_posts']) . " posts failed");
+            
+            // Reduce response size by removing large wix_data from response
+            foreach ($result['failed_posts'] as &$failed_post) {
+                if (isset($failed_post['wix_data'])) {
+                    unset($failed_post['wix_data']);
+                }
+            }
+        }
+        
         wp_send_json_success($result);
     }
     
@@ -184,6 +201,51 @@ class Wix_Migrator_Admin {
             wp_send_json_error($result->get_error_message());
         }
         
+        // Enhanced error reporting with failed posts details for batch processing
+        if (isset($result['failed_posts']) && !empty($result['failed_posts'])) {
+            $migrator = new Wix_Migrator($client_id);
+            $result['failed_posts_summary'] = $migrator->get_failed_posts_summary($result['failed_posts']);
+            
+            // Log failed posts for admin review
+            error_log("Wix Migration: Failed posts detected in batch at offset $offset: " . count($result['failed_posts']) . " posts failed");
+            
+            // Reduce response size by removing large wix_data from response
+            foreach ($result['failed_posts'] as &$failed_post) {
+                if (isset($failed_post['wix_data'])) {
+                    unset($failed_post['wix_data']);
+                }
+            }
+        }
+        
         wp_send_json_success($result);
+    }
+    
+    public function ajax_retry_post() {
+        check_ajax_referer('wix_migrate_nonce', 'nonce');
+        
+        if (!current_user_can('manage_options')) {
+            wp_die('Insufficient permissions');
+        }
+        
+        $wix_post_data = $_POST['wix_post_data'] ?? null;
+        $client_id = get_option('wix_client_id');
+        
+        if (empty($client_id)) {
+            wp_send_json_error('No Wix Client ID configured');
+        }
+        
+        if (empty($wix_post_data) || !is_array($wix_post_data)) {
+            wp_send_json_error('Invalid post data for retry');
+        }
+        
+        try {
+            $migrator = new Wix_Migrator($client_id);
+            $result = $migrator->retry_failed_post($wix_post_data);
+            
+            wp_send_json_success($result);
+        } catch (Exception $e) {
+            error_log("Wix Migration: Manual retry failed - " . $e->getMessage());
+            wp_send_json_error("Manual retry failed: " . $e->getMessage());
+        }
     }
 }

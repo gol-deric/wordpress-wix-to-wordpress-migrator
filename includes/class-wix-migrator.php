@@ -138,6 +138,7 @@ class Wix_Migrator {
             'updated' => 0, 
             'skipped' => 0,
             'errors' => array(),
+            'failed_posts' => array(), // Track individual failed posts for manual retry
             'total_processed' => 0,
             'batches_processed' => 0
         );
@@ -148,7 +149,8 @@ class Wix_Migrator {
         $consecutive_empty_responses = 0;
         $max_empty_responses = 3; // Stop after 3 consecutive empty responses
         
-        while ($has_more && $consecutive_empty_responses < $max_empty_responses) {
+        try {
+            while ($has_more && $consecutive_empty_responses < $max_empty_responses) {
             $response = $this->wix_api->get_posts($offset, $limit);
             
             if (is_wp_error($response)) {
@@ -178,15 +180,40 @@ class Wix_Migrator {
                 // Skip if missing required fields
                 if (empty($wix_post['id']) || empty($wix_post['title'])) {
                     $results['skipped']++;
-                    $results['errors'][] = 'Post missing ID or title at offset ' . ($offset + $index);
+                    $error_msg = 'Post missing ID or title at offset ' . ($offset + $index);
+                    $results['errors'][] = $error_msg;
+                    $results['failed_posts'][] = array(
+                        'wix_id' => $wix_post['id'] ?? 'unknown',
+                        'title' => $wix_post['title'] ?? 'No title',
+                        'error' => $error_msg,
+                        'retry_possible' => false
+                    );
                     continue;
                 }
                 
                 $result = $this->process_post($wix_post);
                 
                 if (is_wp_error($result)) {
-                    $results['errors'][] = 'Post ID ' . $wix_post['id'] . ': ' . $result->get_error_message();
+                    $error_msg = 'Post ID ' . $wix_post['id'] . ': ' . $result->get_error_message();
+                    $results['errors'][] = $error_msg;
+                    $results['failed_posts'][] = array(
+                        'wix_id' => $wix_post['id'],
+                        'title' => $wix_post['title'],
+                        'error' => $result->get_error_message(),
+                        'retry_possible' => true,
+                        'wix_data' => $wix_post // Store original data for retry
+                    );
+                    
+                    // Throw critical error to stop batch if too many consecutive failures
+                    static $consecutive_failures = 0;
+                    $consecutive_failures++;
+                    if ($consecutive_failures >= 5) {
+                        throw new Exception("MIGRATION HALTED: 5 consecutive post sync failures detected. Last error: " . $result->get_error_message() . ". Check failed posts for manual retry.");
+                    }
                     continue;
+                } else {
+                    // Reset consecutive failure counter on success
+                    $consecutive_failures = 0;
                 }
                 
                 if ($result['action'] === 'created') {
@@ -216,6 +243,15 @@ class Wix_Migrator {
                 $results['errors'][] = 'Safety limit reached: Stopped at offset ' . $offset;
                 break;
             }
+            }
+        } catch (Exception $e) {
+            $results['errors'][] = "CRITICAL MIGRATION ERROR: " . $e->getMessage();
+            error_log("Wix Migration: Critical migration error - " . $e->getMessage());
+            
+            // Return results with summary of what was processed before the error
+            if (!empty($results['failed_posts'])) {
+                $results['failed_posts_summary'] = $this->get_failed_posts_summary($results['failed_posts']);
+            }
         }
         
         return $results;
@@ -227,6 +263,7 @@ class Wix_Migrator {
             'updated' => 0,
             'skipped' => 0,
             'errors' => array(),
+            'failed_posts' => array(), // Track individual failed posts for manual retry
             'processed_in_batch' => 0,
             'offset' => $offset,
             'limit' => $limit,
@@ -254,7 +291,14 @@ class Wix_Migrator {
             // Skip if missing required fields
             if (empty($wix_post['id']) || empty($wix_post['title'])) {
                 $results['skipped']++;
-                $results['errors'][] = 'Post missing ID or title at offset ' . ($offset + $index);
+                $error_msg = 'Post missing ID or title at offset ' . ($offset + $index);
+                $results['errors'][] = $error_msg;
+                $results['failed_posts'][] = array(
+                    'wix_id' => $wix_post['id'] ?? 'unknown',
+                    'title' => $wix_post['title'] ?? 'No title',
+                    'error' => $error_msg,
+                    'retry_possible' => false
+                );
                 continue;
             }
             
@@ -265,7 +309,15 @@ class Wix_Migrator {
             $result = $this->process_post($wix_post);
             
             if (is_wp_error($result)) {
-                $results['errors'][] = 'Post ID ' . $wix_post['id'] . ' ("' . substr($wix_post['title'], 0, 50) . '"): ' . $result->get_error_message();
+                $error_msg = 'Post ID ' . $wix_post['id'] . ' ("' . substr($wix_post['title'], 0, 50) . '"): ' . $result->get_error_message();
+                $results['errors'][] = $error_msg;
+                $results['failed_posts'][] = array(
+                    'wix_id' => $wix_post['id'],
+                    'title' => $wix_post['title'],
+                    'error' => $result->get_error_message(),
+                    'retry_possible' => true,
+                    'wix_data' => $wix_post // Store original data for retry
+                );
                 continue;
             }
             
@@ -286,6 +338,58 @@ class Wix_Migrator {
         }
         
         return $results;
+    }
+    
+    public function retry_failed_post($wix_post_data) {
+        error_log("Wix Migration: Manual retry attempt for post " . ($wix_post_data['id'] ?? 'unknown'));
+        
+        if (empty($wix_post_data['id'])) {
+            throw new Exception("Cannot retry post without Wix ID");
+        }
+        
+        try {
+            $result = $this->process_post($wix_post_data);
+            
+            if (is_wp_error($result)) {
+                throw new Exception("Post retry failed for " . $wix_post_data['id'] . ": " . $result->get_error_message());
+            }
+            
+            error_log("Wix Migration: Manual retry SUCCESS for post " . $wix_post_data['id'] . " -> WP ID " . $result['wp_id']);
+            return array(
+                'success' => true,
+                'wp_id' => $result['wp_id'],
+                'action' => $result['action'],
+                'wix_id' => $wix_post_data['id'],
+                'title' => $wix_post_data['title'] ?? 'Unknown title'
+            );
+            
+        } catch (Exception $e) {
+            error_log("Wix Migration: Manual retry EXCEPTION for post " . $wix_post_data['id'] . ": " . $e->getMessage());
+            throw new Exception("Manual retry exception: " . $e->getMessage());
+        }
+    }
+    
+    public function get_failed_posts_summary($failed_posts) {
+        if (empty($failed_posts)) {
+            return "No failed posts to report.";
+        }
+        
+        $summary = "FAILED POSTS SUMMARY (" . count($failed_posts) . " posts failed):\n\n";
+        
+        foreach ($failed_posts as $index => $failed_post) {
+            $retry_status = $failed_post['retry_possible'] ? "[RETRY POSSIBLE]" : "[NO RETRY - DATA ISSUE]";
+            $summary .= ($index + 1) . ". $retry_status\n";
+            $summary .= "   Wix ID: " . $failed_post['wix_id'] . "\n";
+            $summary .= "   Title: " . substr($failed_post['title'], 0, 60) . "\n";
+            $summary .= "   Error: " . $failed_post['error'] . "\n\n";
+        }
+        
+        $summary .= "MANUAL MIGRATION INSTRUCTIONS:\n";
+        $summary .= "1. Copy the Wix ID of failed posts\n";
+        $summary .= "2. Use the retry function in admin to attempt manual migration\n";
+        $summary .= "3. For posts marked [NO RETRY], check the original Wix data integrity\n";
+        
+        return $summary;
     }
     
     private function process_category($wix_category) {
@@ -362,30 +466,100 @@ class Wix_Migrator {
     }
     
     private function process_post($wix_post) {
+        $wix_id = $wix_post['id'] ?? 'unknown';
+        $post_title = $wix_post['title'] ?? 'Untitled';
+        
+        // Log start of processing (only for debugging if needed)
+        if (defined('WP_DEBUG') && WP_DEBUG) {
+            error_log("Wix Migration: Starting to process post $wix_id");
+        }
+        
         try {
-            $wix_id = $wix_post['id'];
-            
             // Check if post already exists in mapping
             $wp_id = $this->get_wp_id_by_wix_id($wix_id, 'post');
             
-            // Convert rich content with error handling
+            // Convert rich content with detailed error handling
             $post_content = '';
+            $content_issues = [];
+            
             try {
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log("Wix Migration: Converting rich content for post $wix_id");
+                }
                 $post_content = $this->convert_rich_content($wix_post['richContent'] ?? array());
+                
+                if (empty($post_content)) {
+                    $content_issues[] = 'Rich content conversion returned empty result';
+                    if (!defined('WIX_MIGRATION_QUIET_MODE')) {
+                        error_log("Wix Migration: Rich content conversion returned empty for post $wix_id");
+                    }
+                    
+                    // Check if we have excerpt as fallback
+                    $excerpt = sanitize_textarea_field($wix_post['excerpt'] ?? '');
+                    if (empty($excerpt)) {
+                        return new WP_Error('empty_content', 
+                            "No content available for migration for Wix ID: $wix_id\n" .
+                            "Title: \"$post_title\"\n" .
+                            "Both rich content and excerpt are empty.\n" .
+                            "This post requires manual content review and retry."
+                        );
+                    } else {
+                        // Use excerpt as content if available
+                        $post_content = $excerpt;
+                        if (!defined('WIX_MIGRATION_QUIET_MODE')) {
+                            error_log("Wix Migration: Using excerpt as content for post $wix_id");
+                        }
+                    }
+                } else {
+                    if (defined('WP_DEBUG') && WP_DEBUG) {
+                        error_log("Wix Migration: Rich content converted successfully for post $wix_id (" . strlen($post_content) . " chars)");
+                    }
+                }
                 
                 // Limit content length to prevent database issues
                 if (strlen($post_content) > 50000) {
+                    $content_issues[] = 'Content truncated due to length (' . strlen($post_content) . ' chars)';
                     $post_content = substr($post_content, 0, 50000) . '...[content truncated]';
+                    // Don't log truncation - too verbose
                 }
                 
-                // Basic HTML validation - remove if invalid
-                if ($post_content && !$this->is_valid_html($post_content)) {
-                    error_log('Wix Migration: Invalid HTML detected for post ' . $wix_id . ', falling back to excerpt');
-                    $post_content = sanitize_textarea_field($wix_post['excerpt'] ?? '');
+                // Basic HTML validation - log warning but continue processing
+                // Can be disabled by setting WIX_MIGRATION_SKIP_HTML_VALIDATION constant
+                if ($post_content && !defined('WIX_MIGRATION_SKIP_HTML_VALIDATION') && !$this->is_valid_html($post_content)) {
+                    $content_issues[] = 'Minor HTML validation issues detected (continuing with processing)';
+                    // Don't log HTML validation issues - too verbose
+                    // Continue processing - WordPress can handle minor HTML issues
                 }
+                
+                // Check for images in content (only log if debugging)
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    $image_count = substr_count($post_content, '<img');
+                    if ($image_count > 0) {
+                        error_log("Wix Migration: Found $image_count images in content for post $wix_id");
+                    } else {
+                        error_log("Wix Migration: No images found in content for post $wix_id");
+                    }
+                }
+                
             } catch (Exception $e) {
-                error_log('Wix Migration: Rich content conversion failed for post ' . $wix_id . ': ' . $e->getMessage());
-                $post_content = sanitize_textarea_field($wix_post['excerpt'] ?? ''); // Fallback to excerpt
+                $content_issues[] = 'Rich content conversion exception: ' . $e->getMessage();
+                error_log("Wix Migration: Rich content conversion FAILED for post $wix_id: " . $e->getMessage());
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log("Wix Migration: Stack trace: " . $e->getTraceAsString());
+                }
+                
+                // Return error instead of creating post with fallback content
+                return new WP_Error('content_conversion_failed', 
+                    "Rich content conversion failed for Wix ID: $wix_id\n" .
+                    "Title: \"$post_title\"\n" .
+                    "Error: " . $e->getMessage() . "\n" .
+                    "This post requires manual content review and retry."
+                );
+            }
+            
+            // Log content issues if any (only in debug mode)
+            if (!empty($content_issues) && defined('WP_DEBUG') && WP_DEBUG) {
+                error_log("Wix Migration: Content issues for post $wix_id: " . implode('; ', $content_issues));
             }
             
             $post_data = array(
@@ -442,71 +616,30 @@ class Wix_Migrator {
             }
             
             if (empty($result) || !is_numeric($result) || $result == 0) {
-                // Try with simplified content as fallback
-                $simplified_post_data = array(
-                    'post_title' => $post_data['post_title'],
-                    'post_content' => $post_data['post_excerpt'], // Use excerpt as content
-                    'post_excerpt' => $post_data['post_excerpt'],
-                    'post_status' => $post_data['post_status'],
-                    'post_author' => $post_data['post_author'],
-                    'post_name' => sanitize_title($post_data['post_title']) . '-' . substr($wix_id, 0, 8),
-                    'meta_input' => array(
-                        'wix_post_id' => $wix_id,
-                        'wix_content_failed' => true
-                    )
-                );
+                // Log the WordPress error for debugging
+                global $wpdb;
+                $error_msg = $wpdb->last_error ? $wpdb->last_error : 'Unknown database error';
                 
-                if (isset($post_data['ID'])) {
-                    $simplified_post_data['ID'] = $post_data['ID'];
-                    $result = wp_update_post($simplified_post_data);
-                } else {
-                    $result = wp_insert_post($simplified_post_data);
+                error_log("Wix Migration: POST CREATION FAILED for post $wix_id - $error_msg");
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log("Wix Migration: Title: \"" . $post_data['post_title'] . "\"");
+                    error_log("Wix Migration: Content length: " . strlen($post_content) . " characters");
+                    if (!empty($content_issues)) {
+                        error_log("Wix Migration: Content issues: " . implode('; ', $content_issues));
+                    }
                 }
                 
-                if (empty($result) || !is_numeric($result) || $result == 0) {
-                    // Final attempt with minimal safe content
-                    $safe_title = sanitize_text_field($post_data['post_title']);
-                    
-                    // Truncate title if too long (WordPress limit is 255 chars for post_name)
-                    if (strlen($safe_title) > 100) {
-                        $safe_title = substr($safe_title, 0, 97) . '...';
-                    }
-                    
-                    // Remove problematic characters
-                    $safe_title = preg_replace('/[^\w\s\-\.\,\:\;\!\?]/', '', $safe_title);
-                    
-                    if (empty($safe_title)) {
-                        $safe_title = 'Migrated Post ' . substr($wix_id, 0, 8);
-                    }
-                    
-                    $minimal_post_data = array(
-                        'post_title' => $safe_title,
-                        'post_content' => 'Content migrated from Wix.',
-                        'post_excerpt' => !empty($post_data['post_excerpt']) ? substr($post_data['post_excerpt'], 0, 200) : 'Migrated from Wix.',
-                        'post_status' => 'publish',
-                        'post_author' => 1,
-                        'post_name' => sanitize_title($safe_title) . '-wix-' . substr($wix_id, 0, 8),
-                        'post_type' => 'post',
-                        'meta_input' => array(
-                            'wix_post_id' => $wix_id,
-                            'wix_content_failed' => true,
-                            'wix_original_title' => $post_data['post_title']
-                        )
-                    );
-                    
-                    error_log('Wix Migration: Attempting minimal safe post creation for ' . $wix_id);
-                    $result = wp_insert_post($minimal_post_data);
-                    
-                    if (empty($result) || !is_numeric($result) || $result == 0) {
-                        // Log the WordPress error for debugging
-                        global $wpdb;
-                        $error_msg = $wpdb->last_error ? $wpdb->last_error : 'Unknown database error';
-                        error_log('Wix Migration: Final fallback failed for ' . $wix_id . '. DB Error: ' . $error_msg);
-                        
-                        return new WP_Error('post_creation_failed', 'WordPress failed to create post with all fallback attempts. Original title: "' . $post_data['post_title'] . '". DB Error: ' . $error_msg);
-                    }
-                    
-                    error_log('Wix Migration: Successfully created minimal post ' . $result . ' for Wix ID ' . $wix_id);
+                return new WP_Error('post_creation_failed', 
+                    "WordPress failed to create post for Wix ID: $wix_id\n" . 
+                    "Title: \"" . $post_data['post_title'] . "\"\n" .
+                    "Database Error: $error_msg\n" .
+                    (!empty($content_issues) ? "Content Issues: " . implode('; ', $content_issues) . "\n" : "") .
+                    "This post requires manual investigation and retry."
+                );
+            } else {
+                // Only log success in debug mode to reduce log spam
+                if (defined('WP_DEBUG') && WP_DEBUG) {
+                    error_log("Wix Migration: SUCCESS - Created post $result for Wix ID $wix_id");
                 }
             }
             
@@ -526,7 +659,9 @@ class Wix_Migrator {
                         wp_set_post_categories($post_id, $category_ids);
                     }
                 } catch (Exception $e) {
-                    error_log('Wix Migration: Category assignment failed for post ' . $wix_id . ': ' . $e->getMessage());
+                    if (!defined('WIX_MIGRATION_QUIET_MODE')) {
+                        error_log('Wix Migration: Category assignment failed for post ' . $wix_id . ': ' . $e->getMessage());
+                    }
                 }
             }
             
@@ -544,19 +679,28 @@ class Wix_Migrator {
                         wp_set_post_tags($post_id, $tag_ids);
                     }
                 } catch (Exception $e) {
-                    error_log('Wix Migration: Tag assignment failed for post ' . $wix_id . ': ' . $e->getMessage());
+                    if (!defined('WIX_MIGRATION_QUIET_MODE')) {
+                        error_log('Wix Migration: Tag assignment failed for post ' . $wix_id . ': ' . $e->getMessage());
+                    }
                 }
             }
             
-            // Handle featured image with error handling
+            // Handle featured image with error handling (reduced logging)
             try {
                 $cover_image_url = $this->extract_cover_image_url($wix_post['coverMedia'] ?? array());
                 if (!empty($cover_image_url)) {
-                    $this->set_featured_image($post_id, $cover_image_url);
+                    $featured_result = $this->set_featured_image($post_id, $cover_image_url);
+                    if (is_wp_error($featured_result)) {
+                        // Only log errors, not successes
+                        error_log("Wix Migration: Featured image FAILED for post $wix_id: " . $featured_result->get_error_message());
+                        add_post_meta($post_id, 'wix_featured_image_failed', $cover_image_url);
+                        add_post_meta($post_id, 'wix_featured_image_error', $featured_result->get_error_message());
+                    }
                 }
             } catch (Exception $e) {
-                error_log('Wix Migration: Featured image failed for post ' . $wix_id . ': ' . $e->getMessage());
-                // Continue processing even if image fails
+                error_log("Wix Migration: Featured image EXCEPTION for post $wix_id: " . $e->getMessage());
+                add_post_meta($post_id, 'wix_featured_image_failed', 'exception');
+                add_post_meta($post_id, 'wix_featured_image_error', $e->getMessage());
             }
             
             // Update or create mapping with error handling
@@ -565,7 +709,9 @@ class Wix_Migrator {
                     $this->save_mapping($wix_id, $post_id, 'post');
                 }
             } catch (Exception $e) {
-                error_log('Wix Migration: Mapping save failed for post ' . $wix_id . ': ' . $e->getMessage());
+                if (!defined('WIX_MIGRATION_QUIET_MODE')) {
+                    error_log('Wix Migration: Mapping save failed for post ' . $wix_id . ': ' . $e->getMessage());
+                }
                 // Continue processing even if mapping fails
             }
             
@@ -1039,23 +1185,14 @@ class Wix_Migrator {
             return false;
         }
         
-        // Check for unclosed critical tags
-        if (substr_count($html_lower, '<script') !== substr_count($html_lower, '</script>')) {
-            return false;
-        }
-        
-        if (substr_count($html_lower, '<style') !== substr_count($html_lower, '</style>')) {
-            return false;
-        }
-        
-        // Basic validation for common unclosed tags
-        $critical_tags = ['p', 'div', 'span', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li'];
+        // Basic validation for critical tags only (more lenient)
+        $critical_tags = ['script', 'style']; // Only check truly critical tags
         foreach ($critical_tags as $tag) {
             $open_count = substr_count($html_lower, "<$tag");
             $close_count = substr_count($html_lower, "</$tag");
             
-            // Allow some tolerance for self-closing tags and missing closing tags in simple content
-            if ($open_count > $close_count + 2) {
+            // Only reject if there's a significant imbalance (script/style must be properly closed)
+            if ($open_count !== $close_count) {
                 return false;
             }
         }
@@ -1077,10 +1214,14 @@ class Wix_Migrator {
             return false;
         }
         
-        // Check for fatal XML/HTML errors
+        // Check for fatal XML/HTML errors only (ignore warnings and minor errors)
         foreach ($errors as $error) {
             if ($error->level === LIBXML_ERR_FATAL) {
-                return false;
+                // Only reject if it's a truly critical error that would break parsing
+                if (strpos($error->message, 'parser error') !== false || 
+                    strpos($error->message, 'not well-formed') !== false) {
+                    return false;
+                }
             }
         }
         

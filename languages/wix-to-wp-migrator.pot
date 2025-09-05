@@ -1,0 +1,111 @@
+# Copyright (C) 2024 Wix to WordPress Migrator
+# This file is distributed under the GPL v2 or later.
+msgid ""
+msgstr ""
+"Project-Id-Version: Wix to WordPress Migrator 1.0.0\n"
+"Report-Msgid-Bugs-To: https://github.com/your-username/wix-to-wordpress-migrator/issues\n"
+"Last-Translator: FULL NAME <EMAIL@ADDRESS>\n"
+"Language-Team: LANGUAGE <LL@li.org>\n"
+"MIME-Version: 1.0\n"
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"POT-Creation-Date: 2024-01-01T00:00:00+00:00\n"
+"PO-Revision-Date: YEAR-MO-DA HO:MI+ZONE\n"
+"X-Generator: WP-CLI 2.8.1\n"
+"X-Domain: wix-to-wp-migrator\n"
+
+#: wix-to-wordpress-migrator.php:175
+msgid "Wix to WordPress Migrator requires PHP 7.4+ and WordPress 5.0+"
+msgstr ""
+
+#: wix-to-wordpress-migrator.php:176
+msgid "Plugin Activation Error"
+msgstr ""
+
+#: wix-to-wordpress-migrator.php:225
+#, php-format
+msgid "Wix to WordPress Migrator requires PHP version %1$s or higher. You are running version %2$s."
+msgstr ""
+
+#: wix-to-wordpress-migrator.php:247
+#, php-format
+msgid "Wix to WordPress Migrator requires WordPress version %1$s or higher. You are running version %2$s."
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:16
+msgid "Wix to WordPress Migrator"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:17
+msgid "Wix Migrator"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:52
+msgid "Authentication successful! Ready to migrate."
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:70
+msgid "Wix Client ID"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:74
+msgid "Enter your Wix application Client ID"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:79
+msgid "Authenticate with Wix"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:84
+msgid "Migration Options"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:87
+msgid "Migration Progress"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:92
+msgid "Starting migration..."
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:100
+msgid "Migrate Categories"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:103
+msgid "Migrate Tags"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:106
+msgid "Migrate Posts"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:112
+msgid "Please authenticate with Wix first to access migration options."
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:129
+msgid "Insufficient permissions"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:136
+#: admin/class-wix-migrator-admin.php:178
+msgid "No Wix Client ID configured"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:155
+msgid "Invalid migration action"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:182
+msgid "Batch migration only supported for posts"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:230
+msgid "Invalid post data for retry"
+msgstr ""
+
+#: admin/class-wix-migrator-admin.php:241
+#, php-format
+msgid "Manual retry failed: %s"
+msgstr ""
